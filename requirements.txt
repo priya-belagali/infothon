@@ -1,0 +1,8 @@
+pandas
+numpy
+scikit-learn
+xgboost
+networkx
+streamlit
+# optional: only if you want AI-written explanations (needs ANTHROPIC_API_KEY)
+# anthropic
