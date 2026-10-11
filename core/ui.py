@@ -36,6 +36,12 @@ background:#9ef01a;color:#06120d;font-size:.7rem;font-weight:800;letter-spacing:
 .opt .note{font-size:.8rem;opacity:.75;margin-top:8px;font-style:italic}
 .ev{border-left:4px solid #4cc9f0;background:rgba(76,201,240,.08);border-radius:8px;padding:8px 12px;margin:6px 0}
 .stButton>button{border-radius:10px;font-weight:700}
+@keyframes sail{0%{left:-340px;opacity:0}6%{opacity:1}94%{opacity:1;visibility:visible}
+100%{left:calc(100vw + 20px);opacity:0;visibility:hidden}}
+.ship-fly{position:fixed;top:30vh;left:-340px;width:300px;z-index:99999;pointer-events:none;
+animation:sail 4.5s ease-in-out forwards;filter:drop-shadow(0 0 10px rgba(158,240,26,.55));text-align:center}
+.ship-fly img{width:100%;display:block}
+.ship-fly .cap{color:#b6f55a;font-weight:800;font-size:.95rem;text-shadow:0 2px 6px #000}
 </style>"""
 
 
@@ -170,3 +176,128 @@ def port_map_df(ports, coords, delay_map):
         rows.append({"port": p.port_name, "lat": lat, "lon": lon,
                      "color": RED if hit else GREEN, "size": 90000 if hit else 45000})
     return pd.DataFrame(rows)
+
+
+# ---------------- risk gauge (pure SVG, no extra libraries) ----------------
+import math
+
+RISK_ZONES = [(0.0, 0.2, GREEN), (0.2, 0.5, AMBER), (0.5, 1.0, RED)]   # matches risk_label thresholds
+PROB_ZONES = [(0.0, 0.3, GREEN), (0.3, 0.6, AMBER), (0.6, 1.0, RED)]   # illustrative bands
+
+
+def _pt(cx, cy, r, f):
+    ang = math.pi * (1 - f)
+    return cx + r * math.cos(ang), cy - r * math.sin(ang)
+
+
+def _arc(cx, cy, r, f1, f2):
+    x1, y1 = _pt(cx, cy, r, f1)
+    x2, y2 = _pt(cx, cy, r, f2)
+    return f"M {x1:.1f} {y1:.1f} A {r} {r} 0 0 1 {x2:.1f} {y2:.1f}"
+
+
+def gauge_html(title, value_text, fraction, zones, caption=""):
+    """Half-circle dial. fraction is 0-1; zones = [(start, end, colour)]."""
+    fraction = max(0.0, min(1.0, float(fraction)))
+    cx, cy, r = 110, 105, 85
+    paths = "".join(f'<path d="{_arc(cx, cy, r, a, b)}" stroke="{c}" stroke-width="16" fill="none" opacity="0.9"/>'
+                    for a, b, c in zones)
+    color = next((c for a, b, c in zones if fraction < b), zones[-1][2])
+    nx, ny = _pt(cx, cy, r - 24, fraction)
+    svg = (f'<svg viewBox="0 0 220 138" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:300px">'
+           f'{paths}'
+           f'<text x="{cx - r}" y="{cy + 18}" text-anchor="middle" font-size="9" fill="currentColor" opacity="0.6">0</text>'
+           f'<text x="{cx + r}" y="{cy + 18}" text-anchor="middle" font-size="9" fill="currentColor" opacity="0.6">max</text>'
+           f'<line x1="{cx}" y1="{cy}" x2="{nx:.1f}" y2="{ny:.1f}" stroke="{color}" stroke-width="4" stroke-linecap="round"/>'
+           f'<circle cx="{cx}" cy="{cy}" r="7" fill="{color}"/>'
+           f'<text x="{cx}" y="{cy + 30}" text-anchor="middle" font-size="26" font-weight="800" fill="{color}">{value_text}</text>'
+           f'</svg>')
+    return (f'<div style="text-align:center"><div style="font-weight:700;margin-bottom:2px">{title}</div>{svg}'
+            f'<div style="font-size:.8rem;opacity:.75">{caption}</div></div>')
+
+
+# ---------------- supply-route map (pydeck ships with Streamlit) ----------------
+FACTORY = {"name": "Factory (demo location)", "lat": 12.97, "lon": 77.59}
+
+
+def route_map_frames(ports, routes, shipments, coords, delay_map):
+    """Two tables: one arc per port -> factory, and one dot per port plus the factory."""
+    per_port = shipments.merge(routes[["route_id", "port_id"]], on="route_id").groupby("port_id").size()
+    arcs, nodes = [], []
+    for _, p in ports.iterrows():
+        lat, lon = coords[p.port_id]
+        hit = p.port_id in delay_map
+        color = [255, 107, 107] if hit else [46, 204, 113]
+        n = int(per_port.get(p.port_id, 0))
+        status = f"Disrupted for {delay_map[p.port_id]} day(s)" if hit else "Operating normally"
+        arcs.append({"port": p.port_name, "slon": lon, "slat": lat, "flon": FACTORY["lon"],
+                     "flat": FACTORY["lat"], "color": color, "width": 2 + n,
+                     "status": status, "shipments": n})
+        nodes.append({"port": p.port_name, "lon": lon, "lat": lat, "color": color,
+                      "status": status, "shipments": n})
+    nodes.append({"port": FACTORY["name"], "lon": FACTORY["lon"], "lat": FACTORY["lat"],
+                  "color": [76, 201, 240], "status": "Receives all shipments", "shipments": "-"})
+    return pd.DataFrame(arcs), pd.DataFrame(nodes)
+
+
+def route_map(ports, routes, shipments, coords, delay_map):
+    import pydeck as pdk
+    arcs, nodes = route_map_frames(ports, routes, shipments, coords, delay_map)
+    arc_layer = pdk.Layer("ArcLayer", data=arcs,
+                          get_source_position="[slon, slat]", get_target_position="[flon, flat]",
+                          get_source_color="color", get_target_color="color",
+                          get_width="width", pickable=True, auto_highlight=True)
+    dot_layer = pdk.Layer("ScatterplotLayer", data=nodes, get_position="[lon, lat]",
+                          get_fill_color="color", get_radius=22000, radius_min_pixels=7,
+                          pickable=True)
+    view = pdk.ViewState(latitude=17.5, longitude=79.0, zoom=3.8, pitch=35)
+    tooltip = {"html": "<b>{port}</b><br/>{status}<br/>Shipments in transit: {shipments}",
+               "style": {"backgroundColor": "#0c2118", "color": "#e6f4ea"}}
+    try:
+        return pdk.Deck(layers=[arc_layer, dot_layer], initial_view_state=view, tooltip=tooltip,
+                        map_provider="carto", map_style="dark")
+    except TypeError:       # older pydeck without map_provider
+        return pdk.Deck(layers=[arc_layer, dot_layer], initial_view_state=view, tooltip=tooltip)
+
+
+# ---------------- approval animation ----------------
+import base64
+from functools import lru_cache
+
+
+@lru_cache(maxsize=4)
+def _gif_b64(path):
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+
+def ship_html(path, caption=""):
+    """Ship sails left -> right across the screen (no box), then disappears.
+    Uses a transparent GIF; position:fixed so it passes over the page."""
+    cap = f'<div class="cap">{caption}</div>' if caption else ""
+    return (f'<div class="ship-fly"><img alt="Container ship" '
+            f'src="data:image/gif;base64,{_gif_b64(str(path))}"/>{cap}</div>')
+
+
+# ---------------- dark / light mode ----------------
+DARK_THEME = {"theme.base": "dark", "theme.primaryColor": "#9ef01a", "theme.backgroundColor": "#06120d",
+              "theme.secondaryBackgroundColor": "#0c2118", "theme.textColor": "#e6f4ea"}
+LIGHT_THEME = {"theme.base": "light", "theme.primaryColor": "#2e8b57", "theme.backgroundColor": "#f6fbf7",
+               "theme.secondaryBackgroundColor": "#e3f1e6", "theme.textColor": "#10261a"}
+
+
+def theme_needs_change(dark):
+    import streamlit as st
+    return (st.get_option("theme.base") == "dark") != bool(dark)
+
+
+def apply_theme(dark):
+    """Switch the whole app theme. Uses Streamlit's internal config setter, so it is wrapped in a
+    try/except: returns True if it worked (caller then reruns), False if this version refuses."""
+    import streamlit as st
+    try:
+        for key, value in (DARK_THEME if dark else LIGHT_THEME).items():
+            st._config.set_option(key, value)
+        return True
+    except Exception:
+        return False
