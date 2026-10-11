@@ -16,17 +16,22 @@ FEATURES = ["base_transit_days", "port_congestion", "event_active",
             "event_duration", "supplier_reliability", "buffer_days"]
 
 
+def _clean(X):
+    """Pick the model columns and force them to plain numbers (XGBoost is strict)."""
+    return X[FEATURES].apply(pd.to_numeric, errors="coerce").astype(float)
+
+
 class DelayModel:
     def __init__(self, clf, kind, metrics):
         self.clf, self.kind, self.metrics = clf, kind, metrics
 
     def predict_proba(self, X):
-        return self.clf.predict_proba(X[FEATURES])[:, 1]
+        return self.clf.predict_proba(_clean(X))[:, 1]
 
     def explain(self, row):
         """Top 3 factors. XGBoost: SHAP-style contributions (built in).
         Fallback: global feature importance."""
-        X = pd.DataFrame([row])[FEATURES]
+        X = _clean(pd.DataFrame([row]))
         if self.kind == "xgboost":
             contrib = self.clf.get_booster().predict(xgb.DMatrix(X), pred_contribs=True)[0][:-1]
         else:
@@ -50,9 +55,9 @@ def train_model():
     else:
         clf = GradientBoostingClassifier(n_estimators=150, max_depth=3, random_state=0)
         kind = "sklearn"
-    clf.fit(train[FEATURES], train["late"])
+    clf.fit(_clean(train), train["late"])
 
-    ml_pred = clf.predict(test[FEATURES])
+    ml_pred = clf.predict(_clean(test))
     rule_pred = (test["event_duration"] > test["buffer_days"]).astype(int)  # simple baseline
     metrics = {
         "kind": kind, "train_rows": len(train), "test_rows": len(test),
