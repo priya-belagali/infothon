@@ -4,13 +4,13 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+import subprocess
+
 import pandas as pd
 import streamlit as st
 
 from agent import pipeline
-from core import analysis, decisions, model, simulator
-
-import subprocess
+from core import analysis, decisions, model, simulator, weather
 from core.db import DB_PATH
 
 st.set_page_config(page_title="Supply Chain Disruption Agent", layout="wide")
@@ -27,20 +27,41 @@ def get_model():
     return model.train_model()          # trains once, then reused
 
 
+@st.cache_data(ttl=1800, show_spinner="Reading live weather...")
+def get_weather():
+    return weather.load_weather()          # cached 30 minutes so we don't hammer the API
+
+
 mdl = get_model()
 net = analysis.load_network()
-delay_map = analysis.live_delay_map(net)
 port_names = net["ports"].set_index("port_id")["port_name"].to_dict()
 
 # ---------------- sidebar ----------------
 st.sidebar.title("Disruption Agent")
 page = st.sidebar.radio("Page", ["Dashboard", "Order detail", "What-if simulator",
-                                 "Decision log", "Model check"])
+                                 "Weather", "Decision log", "Model check"])
 stale_demo = st.sidebar.checkbox("Simulate stale data (+9 hours)")
 extra_hours = 9 if stale_demo else 0
+
+st.sidebar.markdown("**Disruption sources**")
+use_db_event = st.sidebar.checkbox("Port closure from database (demo)", value=True)
+use_weather = st.sidebar.checkbox("Live weather (Open-Meteo)")
+demo_storm = st.sidebar.checkbox("Demo: inject a storm at Chennai")
+
+db_map = analysis.live_delay_map(net) if use_db_event else {}
+weather_info = get_weather() if use_weather else {}
+if demo_storm:
+    weather_info = weather.with_demo_storm(weather_info, "P1", 3)
+weather_map = weather.to_delay_map(weather_info)
+delay_map = weather.merge_delays(db_map, weather_map)
+
 st.sidebar.markdown("**Live disruptions**")
-for pid, d in delay_map.items():
-    st.sidebar.warning(f"{port_names[pid]}: closed {d} day(s)")
+if not delay_map:
+    st.sidebar.success("None right now")
+for pid, d in db_map.items():
+    st.sidebar.warning(f"{port_names[pid]}: port closed {d} day(s)")
+for pid, d in weather_map.items():
+    st.sidebar.warning(f"{port_names[pid]}: severe weather {d} day(s)")
 
 df = analysis.assess(net, delay_map, mdl, extra_hours)
 
@@ -124,7 +145,7 @@ elif page == "What-if simulator":
     port_id = c1.selectbox("Disruption: port closure at", list(port_names), format_func=port_names.get)
     days = c2.slider("Duration (days)", 1, 7, 3)
     if st.button("SIMULATE IMPACT"):
-        base, sim = simulator.simulate(net, mdl, port_id, days)
+        base, sim = simulator.simulate(net, mdl, port_id, days, base_map=delay_map)
         table = pd.DataFrame({
             "Baseline": [base["orders_affected"], base["breaches"], f"Rs {base['recovery_cost']:,.0f}"],
             "Simulated": [sim["orders_affected"], sim["breaches"], f"Rs {sim['recovery_cost']:,.0f}"],
@@ -133,6 +154,18 @@ elif page == "What-if simulator":
         if sim["unresolved"]:
             st.error(f"{sim['unresolved']} breaching order(s) have no feasible plan - escalate to a human.")
         st.caption("Computed from the synthetic demo data - not real-world results.")
+
+elif page == "Weather":
+    st.title("Port weather")
+    if not weather_info:
+        st.info("Tick 'Live weather (Open-Meteo)' in the sidebar to read real forecasts, "
+                "or 'Demo: inject a storm' to simulate one.")
+    else:
+        st.dataframe(weather.weather_table(weather_info, port_names),
+                     use_container_width=True, hide_index=True)
+        st.caption(f"A day is 'severe' if gusts >= {weather.GUST_LIMIT_KMH} km/h or rain >= "
+                   f"{weather.RAIN_LIMIT_MM} mm. Severe days in the next {weather.FORECAST_DAYS} days "
+                   "become disruption days. These thresholds are assumptions, not validated.")
 
 elif page == "Decision log":
     st.title("Decision log")

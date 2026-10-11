@@ -17,7 +17,7 @@ FEATURES = ["base_transit_days", "port_congestion", "event_active",
 
 
 def _clean(X):
-    """Pick the model columns and force them to plain numbers (XGBoost is strict)."""
+    """Pick the model columns and force plain numbers (XGBoost is strict about dtypes)."""
     return X[FEATURES].apply(pd.to_numeric, errors="coerce").astype(float)
 
 

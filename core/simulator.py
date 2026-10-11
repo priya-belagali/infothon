@@ -18,8 +18,9 @@ def summarize(net, mdl, delay_map):
             "recovery_cost": cost, "unresolved": unresolved}
 
 
-def simulate(net, mdl, port_id, duration_days):
-    base_map = analysis.live_delay_map(net)
+def simulate(net, mdl, port_id, duration_days, base_map=None):
+    if base_map is None:
+        base_map = analysis.live_delay_map(net)
     sim_map = dict(base_map)
     sim_map[port_id] = max(sim_map.get(port_id, 0), duration_days)
     return summarize(net, mdl, base_map), summarize(net, mdl, sim_map)
