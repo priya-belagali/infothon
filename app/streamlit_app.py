@@ -12,7 +12,7 @@ from agent import pipeline
 from core import analysis, decisions, model, simulator, ui, weather
 from core.db import DB_PATH
 
-st.set_page_config(page_title="Supply Chain Disruption Agent", page_icon="⚓", layout="wide")
+st.set_page_config(page_title="Supply Chain Disruption Agent", layout="wide")
 ui.inject_css()
 SHIP_GIF = Path(__file__).resolve().parent / "Container_ship_transparent.gif"
 
@@ -38,23 +38,23 @@ net = analysis.load_network()
 port_names = net["ports"].set_index("port_id")["port_name"].to_dict()
 
 # ---------------- sidebar ----------------
-P_DASH, P_ORDER, P_SIM = "📊 Dashboard", "🔍 Order detail", "🧪 What-if simulator"
-P_WEATHER, P_LOG, P_MODEL = "🌦️ Weather", "📝 Decision log", "🤖 Model check"
+P_DASH, P_ORDER, P_SIM = "Dashboard", "Order detail", "What-if simulator"
+P_WEATHER, P_LOG, P_MODEL = "Weather", "Decision log", "Model check"
 
-st.sidebar.markdown("## ⚓ Disruption Agent")
+st.sidebar.markdown("## Disruption Agent")
 st.sidebar.caption("Predict · Trace · Approve")
 
 # ---- dark / light mode switch ----
 if "dark_mode" not in st.session_state:
     st.session_state["dark_mode"] = st.get_option("theme.base") != "light"
 _toggle = getattr(st.sidebar, "toggle", st.sidebar.checkbox)
-dark_mode = _toggle("🌙 Dark mode", key="dark_mode")
+dark_mode = _toggle("Dark mode", key="dark_mode")
 if ui.theme_needs_change(dark_mode) and st.session_state.get("_theme_tried") != dark_mode:
     st.session_state["_theme_tried"] = dark_mode      # try once per switch, never loop
     if ui.apply_theme(dark_mode):
         (getattr(st, "rerun", None) or st.experimental_rerun)()
 if ui.theme_needs_change(dark_mode):
-    st.sidebar.caption("Theme switch isn't available in this version - use the ⋮ menu → Settings → Theme.")
+    st.sidebar.caption("Theme switch isn't available in this version - use the menu (three dots, top right) > Settings > Theme.")
 
 page = st.sidebar.radio("Go to", [P_DASH, P_ORDER, P_SIM, P_WEATHER, P_LOG, P_MODEL])
 stale_demo = st.sidebar.checkbox("Simulate stale data (+9 hours)")
@@ -78,9 +78,9 @@ st.sidebar.markdown("**Live disruptions**")
 if not delay_map:
     st.sidebar.success("None right now")
 for pid, d in db_map.items():
-    st.sidebar.error(f"⚓ {port_names[pid]}: port closed {d} day(s)")
+    st.sidebar.error(f"{port_names[pid]}: port closed {d} day(s)")
 for pid, d in weather_map.items():
-    st.sidebar.warning(f"🌪️ {port_names[pid]}: severe weather {d} day(s)")
+    st.sidebar.warning(f"{port_names[pid]}: severe weather {d} day(s)")
 
 
 
@@ -90,20 +90,19 @@ def toast_on_change(key, value, on_true, on_false=None):
     if prev is not None and prev != value:
         msg = on_true if value else on_false
         if msg:
-            st.toast(msg[1], icon=msg[0])
+            st.toast(msg)
     st.session_state[f"_prev_{key}"] = value
 
 
 toast_on_change("stale", stale_demo,
-                ("⚠️", "Safe mode ON: shipment data is 9 hours old."), ("✅", "Shipment data is fresh again."))
-toast_on_change("storm", demo_storm,
-                ("🌪️", "Demo storm injected at Chennai."), ("✅", "Demo storm cleared."))
+                "Safe mode ON: shipment data is 9 hours old.", "Shipment data is fresh again.")
+toast_on_change("storm", demo_storm, "Demo storm injected at Chennai.", "Demo storm cleared.")
 toast_on_change("dbevent", use_db_event,
-                ("⚓", "Database port closure included."), ("✅", "Database port closure removed."))
+                "Database port closure included.", "Database port closure removed.")
 toast_on_change("weather", use_weather,
-                ("⚠️", f"Weather unavailable for {len(weather_failed)} port(s). Check your internet connection.")
-                if weather_failed else ("☁️", "Live weather loaded."),
-                ("✅", "Live weather switched off."))
+                f"Weather unavailable for {len(weather_failed)} port(s). Check your internet connection."
+                if weather_failed else "Live weather loaded.",
+                "Live weather switched off.")
 
 df = analysis.assess(net, delay_map, mdl, extra_hours)
 
@@ -114,10 +113,10 @@ if page == P_DASH:
             tags=["SYNTHETIC DEMO DATA", "HUMAN-APPROVED ACTIONS ONLY"])
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("⚓ Active disruptions", len(delay_map))
-    k2.metric("📦 Orders affected", len(df))
-    k3.metric("🔴 High risk", int((df.risk_label == "HIGH").sum()) if not df.empty else 0)
-    k4.metric("⚠️ Potential breaches", int(df.breach.sum()) if not df.empty else 0)
+    k1.metric("Active disruptions", len(delay_map))
+    k2.metric("Orders affected", len(df))
+    k3.metric("High risk", int((df.risk_label == "HIGH").sum()) if not df.empty else 0)
+    k4.metric("Potential breaches", int(df.breach.sum()) if not df.empty else 0)
 
     if df.empty:
         st.success("No orders are exposed to the current disruptions.")
@@ -150,9 +149,9 @@ if page == P_DASH:
     if not df.empty:
         st.subheader("All exposed orders")
         view = df.copy()
-        view["risk_label"] = view["risk_label"].map(lambda l: f"{ui.LABEL_EMOJI[l]} {l}")
+        view["risk_label"] = view["risk_label"]
         view["ml_prob"] = (view["ml_prob"] * 100).round(0)
-        view["breach"] = view["breach"].map(lambda b: "⚠️ Breach" if b else "OK")
+        view["breach"] = view["breach"].map(lambda b: "Breach" if b else "OK")
         cols = ["order_id", "customer", "sku", "risk_score", "risk_label", "ml_prob",
                 "delay_days", "buffer_days", "cover_days", "breach", "port_name"]
         st.dataframe(
@@ -175,23 +174,23 @@ elif page == P_ORDER:
     row, rec = res["row"], res["recommended"]
 
     ui.hero(f"Order {order_id}", f"{row.customer} · {row.sku} · quantity {row.qty}",
-            tags=[f"{ui.LABEL_EMOJI[row.risk_label]} {row.risk_label} RISK",
+            tags=[f"{row.risk_label} RISK",
                   f"CONFIDENCE: {res['confidence']}"])
 
     st.markdown(ui.flow_html([
-        ("⚓", "Disruption", f"{row.port_name}: {row.delay_days} day(s)", "bad"),
-        ("🚚", "Shipment delay", f"{row.shipment_id} +{row.delay_days}d", "bad"),
-        ("🏭", "Stock cover", f"{row.sku}: {row.cover_days}d",
+        ("1", "Disruption", f"{row.port_name}: {row.delay_days} day(s)", "bad"),
+        ("2", "Shipment delay", f"{row.shipment_id} +{row.delay_days}d", "bad"),
+        ("3", "Stock cover", f"{row.sku}: {row.cover_days}d",
          "bad" if row.cover_days < row.delay_days else ""),
-        ("👤", "Order at risk", f"Buffer {row.buffer_days}d", "bad" if row.breach else ""),
-        ("🧭", "Recovery", rec.name if rec else "Escalate to human", "good"),
+        ("4", "Order at risk", f"Buffer {row.buffer_days}d", "bad" if row.breach else ""),
+        ("5", "Recovery", rec.name if rec else "Escalate to human", "good"),
     ]), unsafe_allow_html=True)
 
     if res["stale"]:
         st.warning(f"DATA QUALITY WARNING: shipment information is {res['hours_old']:.0f} hours old. "
                    "Refresh the data or verify the shipment manually.")
 
-    tab_over, tab_evid, tab_opts, tab_dec = st.tabs(["📊 Overview", "🧾 Evidence", "🧭 Options", "✅ Decision"])
+    tab_over, tab_evid, tab_opts, tab_dec = st.tabs(["Overview", "Evidence", "Options", "Decision"])
 
     with tab_over:
         g1, g2, g3 = st.columns(3)
@@ -201,7 +200,12 @@ elif page == P_ORDER:
                                   ui.PROB_ZONES, "Model estimate, not calibrated"), unsafe_allow_html=True)
         with g3:
             st.metric("Confidence", res["confidence"])
-            st.metric("Recommended action", rec.name if rec else "Escalate to a human")
+            if rec:
+                detail = f"Est. cost Rs {rec.cost:,.0f} · residual delay {rec.delay_days:g} day(s)"
+                st.markdown(ui.rec_card_html("Recommended action", rec.name, detail), unsafe_allow_html=True)
+            else:
+                st.markdown(ui.rec_card_html("Recommended action", "Escalate to a human planner",
+                                             "No feasible recovery plan was found."), unsafe_allow_html=True)
 
     with tab_evid:
         e1, e2 = st.columns([3, 2])
@@ -241,19 +245,19 @@ elif page == P_ORDER:
             evidence_txt = (f"Risk {row.risk_score}/100 · {row.shipment_id} +{row.delay_days}d · "
                             f"cover {row.cover_days}d")
             c1, c2 = st.columns(2)
-            if c1.button("✅ APPROVE", disabled=not verified, use_container_width=True):
+            if c1.button("APPROVE", disabled=not verified, use_container_width=True):
                 decisions.log_decision(order_id, chosen.name, "APPROVED by planner",
                                        f"{chosen.name}: est. Rs {chosen.cost:,.0f}, residual delay {chosen.delay_days:g}d",
                                        evidence_txt, chosen.cost)
-                st.toast(f"Decision logged: {chosen.name} for {order_id}", icon="✅")
+                st.toast(f"Decision logged: {chosen.name} for {order_id}")
                 st.success("Decision logged. (No operational system was changed - this is a demo.)")
                 if SHIP_GIF.exists():
                     st.markdown(ui.ship_html(SHIP_GIF, "Approved - cargo is on the move"),
                                 unsafe_allow_html=True)
-            if c2.button("❌ REJECT", use_container_width=True):
+            if c2.button("REJECT", use_container_width=True):
                 decisions.log_decision(order_id, chosen.name, "REJECTED by planner",
                                        "Planner rejected the recommendation", evidence_txt, chosen.cost)
-                st.toast(f"Rejection logged for {order_id}", icon="❌")
+                st.toast(f"Rejection logged for {order_id}")
                 st.info("Rejection logged.")
 
 elif page == P_SIM:
@@ -262,7 +266,7 @@ elif page == P_SIM:
     c1, c2 = st.columns(2)
     port_id = c1.selectbox("Disruption: port closure at", list(port_names), format_func=port_names.get)
     days = c2.slider("Duration (days)", 1, 7, 3)
-    if st.button("🚀 SIMULATE IMPACT"):
+    if st.button("SIMULATE IMPACT"):
         base, sim = simulator.simulate(net, mdl, port_id, days, base_map=delay_map)
         m1, m2, m3 = st.columns(3)
         m1.metric("Orders affected", sim["orders_affected"],
@@ -271,7 +275,7 @@ elif page == P_SIM:
                   delta=f"{sim['breaches'] - base['breaches']:+d}", delta_color="inverse")
         m3.metric("Est. recovery cost", f"Rs {sim['recovery_cost']:,.0f}",
                   delta=f"Rs {sim['recovery_cost'] - base['recovery_cost']:+,.0f}", delta_color="inverse")
-        st.toast("Simulation complete", icon="🧪")
+        st.toast("Simulation complete")
         st.altair_chart(ui.sim_chart(base, sim))
         if sim["unresolved"]:
             st.error(f"{sim['unresolved']} breaching order(s) have no feasible plan - escalate to a human.")
@@ -302,9 +306,8 @@ elif page == P_LOG:
         approved = log["status"].str.contains("APPROVED")
         m1, m2, m3 = st.columns(3)
         m1.metric("Decisions logged", len(log))
-        m2.metric("✅ Approved", int(approved.sum()))
+        m2.metric("Approved", int(approved.sum()))
         m3.metric("Approved spend", f"Rs {log.loc[approved, 'est_cost'].sum():,.0f}")
-        log["status"] = log["status"].map(lambda s: ("✅ " if "APPROVED" in s else "❌ ") + s)
         st.dataframe(log, use_container_width=True, hide_index=True)
 
 else:

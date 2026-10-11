@@ -4,7 +4,6 @@ import pandas as pd
 
 LIME, GREEN, AMBER, RED, TEAL = "#9ef01a", "#2ecc71", "#f5a623", "#ff6b6b", "#4cc9f0"
 LABEL_COLORS = {"HIGH": RED, "MEDIUM": AMBER, "LOW": GREEN}
-LABEL_EMOJI = {"HIGH": "🔴", "MEDIUM": "🟠", "LOW": "🟢"}
 _RISK_SCALE = alt.Scale(domain=["HIGH", "MEDIUM", "LOW"], range=[RED, AMBER, GREEN])
 
 CSS = """<style>
@@ -23,7 +22,7 @@ border:1px solid rgba(158,240,26,.30)}
 .flow .step.bad{border-color:#ff6b6b;background:rgba(255,107,107,.10)}
 .flow .step.good{border-color:#9ef01a;background:rgba(158,240,26,.16);box-shadow:0 0 12px rgba(158,240,26,.25)}
 .flow .arrow{align-self:center;color:#9ef01a;font-size:1.4rem;font-weight:700}
-.flow .icon{font-size:1.5rem}
+.flow .icon{display:inline-block;width:26px;height:26px;line-height:26px;border-radius:50%;background:#9ef01a;color:#06120d;font-weight:800;font-size:.85rem;text-align:center}
 .flow .title{font-weight:700;margin-top:2px}
 .flow .sub{font-size:.8rem;opacity:.8}
 .opt{position:relative;border-radius:14px;padding:16px;border:1px solid rgba(158,240,26,.30);
@@ -36,6 +35,11 @@ background:#9ef01a;color:#06120d;font-size:.7rem;font-weight:800;letter-spacing:
 .opt .note{font-size:.8rem;opacity:.75;margin-top:8px;font-style:italic}
 .ev{border-left:4px solid #4cc9f0;background:rgba(76,201,240,.08);border-radius:8px;padding:8px 12px;margin:6px 0}
 .stButton>button{border-radius:10px;font-weight:700}
+.rec-card{background:rgba(158,240,26,.07);border:1px solid rgba(158,240,26,.30);border-left:5px solid #9ef01a;
+border-radius:12px;padding:14px 16px;margin-top:10px}
+.rec-card .lbl{font-size:.85rem;opacity:.75}
+.rec-card .val{font-size:1.35rem;font-weight:800;line-height:1.25;white-space:normal;overflow-wrap:anywhere}
+.rec-card .sub{font-size:.85rem;opacity:.8;margin-top:4px;white-space:normal;overflow-wrap:anywhere}
 @keyframes sail{0%{left:-340px;opacity:0}6%{opacity:1}94%{opacity:1;visibility:visible}
 100%{left:calc(100vw + 20px);opacity:0;visibility:hidden}}
 .ship-fly{position:fixed;top:30vh;left:-340px;width:300px;z-index:99999;pointer-events:none;
@@ -69,18 +73,25 @@ def flow_html(steps):
         parts.append(f'<div class="step {kind}"><div class="icon">{icon}</div>'
                      f'<div class="title">{title}</div><div class="sub">{sub}</div></div>')
         if i < len(steps) - 1:
-            parts.append('<div class="arrow">➜</div>')
+            parts.append('<div class="arrow">&rarr;</div>')
     return '<div class="flow">' + "".join(parts) + "</div>"
 
 
 def option_card_html(o, recommended):
     cls = " rec" if recommended else ""
-    ribbon = '<div class="ribbon">★ RECOMMENDED</div>' if recommended else ""
-    verdict = "❌ Breaches promise" if o.breach else "✅ Meets promise"
+    ribbon = '<div class="ribbon">RECOMMENDED</div>' if recommended else ""
+    verdict = (f'<div style="font-weight:700;color:{RED}">Breaches promise</div>' if o.breach
+               else f'<div style="font-weight:700;color:{GREEN}">Meets promise</div>')
     risk = f"<div>ML breach risk: {o.breach_risk:.0%}</div>" if o.breach_risk is not None else ""
     return (f'<div class="opt{cls}">{ribbon}<h4>{o.name}</h4><div class="big">Rs {o.cost:,.0f}</div>'
             f'<div>Residual delay: {o.delay_days:g} day(s)</div><div>Feasibility: {o.feasibility:.0%}</div>'
-            f'<div>{verdict}</div>{risk}<div class="note">{o.note}</div></div>')
+            f'{verdict}{risk}<div class="note">{o.note}</div></div>')
+
+
+def rec_card_html(label, text, sub=""):
+    """Card that shows the FULL text (wraps onto several lines; st.metric cuts long values with '...')."""
+    sub_html = f'<div class="sub">{sub}</div>' if sub else ""
+    return f'<div class="rec-card"><div class="lbl">{label}</div><div class="val">{text}</div>{sub_html}</div>'
 
 
 def evidence_html(lines):
