@@ -10,7 +10,15 @@ import streamlit as st
 from agent import pipeline
 from core import analysis, decisions, model, simulator
 
+import subprocess
+from core.db import DB_PATH
+
 st.set_page_config(page_title="Supply Chain Disruption Agent", layout="wide")
+
+# On a fresh server there is no database yet, so build the synthetic data once.
+if not DB_PATH.exists():
+    root = Path(__file__).resolve().parent.parent
+    subprocess.run([sys.executable, str(root / "data" / "generate_synthetic.py")], check=True)
 decisions.init_table()
 
 
