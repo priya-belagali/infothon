@@ -46,6 +46,9 @@ border-radius:12px;padding:14px 16px;margin-top:10px}
 animation:sail 4.5s ease-in-out forwards;filter:drop-shadow(0 0 10px rgba(158,240,26,.55));text-align:center}
 .ship-fly img{width:100%;display:block}
 .ship-fly .cap{color:#b6f55a;font-weight:800;font-size:.95rem;text-shadow:0 2px 6px #000}
+.card-detail-box{background:rgba(158,240,26,.05);border:1px solid rgba(158,240,26,.35);
+border-radius:14px;padding:18px 20px;margin:12px 0 20px 0;box-shadow:0 4px 18px rgba(0,0,0,.20)}
+.card-detail-box h3{margin-top:0;margin-bottom:8px}
 </style>"""
 
 
@@ -251,7 +254,7 @@ def route_map_frames(ports, routes, shipments, coords, delay_map):
     return pd.DataFrame(arcs), pd.DataFrame(nodes)
 
 
-def route_map(ports, routes, shipments, coords, delay_map):
+def route_map(ports, routes, shipments, coords, delay_map, dark=True):
     import pydeck as pdk
     arcs, nodes = route_map_frames(ports, routes, shipments, coords, delay_map)
     arc_layer = pdk.Layer("ArcLayer", data=arcs,
@@ -262,13 +265,20 @@ def route_map(ports, routes, shipments, coords, delay_map):
                           get_fill_color="color", get_radius=22000, radius_min_pixels=7,
                           pickable=True)
     view = pdk.ViewState(latitude=17.5, longitude=79.0, zoom=3.8, pitch=35)
-    tooltip = {"html": "<b>{port}</b><br/>{status}<br/>Shipments in transit: {shipments}",
-               "style": {"backgroundColor": "#0c2118", "color": "#e6f4ea"}}
+    map_style = "dark" if dark else "light"
+    if dark:
+        tooltip = {"html": "<b>{port}</b><br/>{status}<br/>Shipments in transit: {shipments}",
+                   "style": {"backgroundColor": "#0c2118", "color": "#e6f4ea", "border": "1px solid #2ecc7155"}}
+    else:
+        tooltip = {"html": "<b>{port}</b><br/>{status}<br/>Shipments in transit: {shipments}",
+                   "style": {"backgroundColor": "#ffffff", "color": "#10261a", "border": "1px solid #2e8b5755",
+                             "boxShadow": "0 2px 8px rgba(0,0,0,0.15)"}}
     try:
         return pdk.Deck(layers=[arc_layer, dot_layer], initial_view_state=view, tooltip=tooltip,
-                        map_provider="carto", map_style="dark")
+                        map_provider="carto", map_style=map_style)
     except TypeError:       # older pydeck without map_provider
-        return pdk.Deck(layers=[arc_layer, dot_layer], initial_view_state=view, tooltip=tooltip)
+        return pdk.Deck(layers=[arc_layer, dot_layer], initial_view_state=view, tooltip=tooltip,
+                        map_style=map_style)
 
 
 # ---------------- approval animation ----------------

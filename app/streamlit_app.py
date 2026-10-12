@@ -106,17 +106,236 @@ toast_on_change("weather", use_weather,
 
 df = analysis.assess(net, delay_map, mdl, extra_hours)
 
+
+@st.dialog("Confirm Action Approval", width="small")
+def confirm_approve_dialog(order_id, chosen, evidence_txt):
+    st.markdown("### Are you sure you want to approve?")
+    st.write(f"You are approving **{chosen.name}** for order **{order_id}**.")
+    st.markdown(f"- **Est. Cost:** Rs {chosen.cost:,.0f}  \n- **Residual Delay:** {chosen.delay_days:g} day(s)")
+    st.warning("**Note:** Once submitted, this decision cannot be changed.")
+
+    col1, col2 = st.columns(2)
+    if col1.button("Yes, Approve", type="primary", use_container_width=True):
+        decisions.log_decision(
+            order_id, chosen.name, "APPROVED by planner",
+            f"{chosen.name}: est. Rs {chosen.cost:,.0f}, residual delay {chosen.delay_days:g}d",
+            evidence_txt, chosen.cost
+        )
+        st.session_state[f"_just_approved_{order_id}"] = True
+        st.toast(f"Decision logged: {chosen.name} for {order_id}")
+        st.rerun()
+    if col2.button("Cancel", use_container_width=True):
+        st.rerun()
+
+
+@st.dialog("Confirm Action Rejection", width="small")
+def confirm_reject_dialog(order_id, chosen, evidence_txt):
+    st.markdown("### Are you sure you want to reject?")
+    st.write(f"You are rejecting the recommended action **{chosen.name}** for order **{order_id}**.")
+    st.warning("**Note:** Once submitted, this decision cannot be changed.")
+
+    col1, col2 = st.columns(2)
+    if col1.button("Yes, Reject", type="primary", use_container_width=True):
+        decisions.log_decision(
+            order_id, chosen.name, "REJECTED by planner",
+            "Planner rejected the recommendation", evidence_txt, chosen.cost
+        )
+        st.session_state[f"_just_rejected_{order_id}"] = True
+        st.toast(f"Rejection logged for {order_id}")
+        st.rerun()
+    if col2.button("Cancel", use_container_width=True):
+        st.rerun()
+
+
 # ---------------- pages ----------------
 if page == P_DASH:
     ui.hero("Supply Chain Disruption Agent",
             "Predict the delay. Trace the impact. Choose the next move.",
             tags=["SYNTHETIC DEMO DATA", "HUMAN-APPROVED ACTIONS ONLY"])
 
+    if "dash_card_selected" not in st.session_state:
+        st.session_state["dash_card_selected"] = None
+
+    selected_card = st.session_state.get("dash_card_selected")
+    high_risk_count = int((df.risk_label == "HIGH").sum()) if not df.empty else 0
+    breach_count = int(df.breach.sum()) if not df.empty else 0
+
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Active disruptions", len(delay_map))
-    k2.metric("Orders affected", len(df))
-    k3.metric("High risk", int((df.risk_label == "HIGH").sum()) if not df.empty else 0)
-    k4.metric("Potential breaches", int(df.breach.sum()) if not df.empty else 0)
+    with k1:
+        is_active = (selected_card == "disruptions")
+        with st.container(border=True):
+            st.metric("Active disruptions", len(delay_map),
+                      help="Click to inspect disrupted ports and weather conditions")
+            if st.button("Hide details" if is_active else "View details", key="btn_card_disruptions",
+                         type="primary" if is_active else "secondary", use_container_width=True):
+                st.session_state["dash_card_selected"] = None if is_active else "disruptions"
+                st.rerun()
+
+    with k2:
+        is_active = (selected_card == "orders")
+        with st.container(border=True):
+            st.metric("Orders affected", len(df),
+                      help="Click to inspect all affected customer orders")
+            if st.button("Hide details" if is_active else "View details", key="btn_card_orders",
+                         type="primary" if is_active else "secondary", use_container_width=True):
+                st.session_state["dash_card_selected"] = None if is_active else "orders"
+                st.rerun()
+
+    with k3:
+        is_active = (selected_card == "high_risk")
+        with st.container(border=True):
+            st.metric("High risk", high_risk_count,
+                      help="Click to inspect priority high-risk orders")
+            if st.button("Hide details" if is_active else "View details", key="btn_card_high_risk",
+                         type="primary" if is_active else "secondary", use_container_width=True):
+                st.session_state["dash_card_selected"] = None if is_active else "high_risk"
+                st.rerun()
+
+    with k4:
+        is_active = (selected_card == "breaches")
+        with st.container(border=True):
+            st.metric("Potential breaches", breach_count,
+                      help="Click to inspect orders exceeding buffer days")
+            if st.button("Hide details" if is_active else "View details", key="btn_card_breaches",
+                         type="primary" if is_active else "secondary", use_container_width=True):
+                st.session_state["dash_card_selected"] = None if is_active else "breaches"
+                st.rerun()
+
+    # ---- Interactive Card Details Section ----
+    if selected_card is not None:
+        with st.container(border=True):
+            d_hdr, d_cls = st.columns([6, 1])
+            with d_cls:
+                if st.button("Close", key="btn_close_dash_card_detail", use_container_width=True):
+                    st.session_state["dash_card_selected"] = None
+                    st.rerun()
+
+            if selected_card == "disruptions":
+                with d_hdr:
+                    st.markdown("### Active Disruptions Details")
+                    st.caption("Live logistics ports experiencing closures or severe weather.")
+                if not delay_map:
+                    st.success("No active disruptions. All supply lanes are operating normally.")
+                else:
+                    per_port = net["shipments"].merge(net["routes"][["route_id", "port_id"]], on="route_id").groupby("port_id").size()
+                    d_rows = []
+                    for pid, days in delay_map.items():
+                        causes = []
+                        if pid in db_map:
+                            causes.append(f"Port closure event ({db_map[pid]}d)")
+                        if pid in weather_map:
+                            w = weather_info.get(pid, {})
+                            gust = f"{w.get('gust_max', '-')} km/h gust" if w.get("gust_max") else ""
+                            rain = f"{w.get('rain_max', '-')} mm rain" if w.get("rain_max") else ""
+                            causes.append(f"Severe weather ({weather_map[pid]}d: {', '.join(filter(None, [gust, rain]))})")
+                        orders_linked = len(df[df.port_id == pid]) if not df.empty else 0
+                        coords = weather.PORT_COORDS.get(pid, (None, None))
+                        d_rows.append({
+                            "Port ID": pid,
+                            "Port Name": port_names.get(pid, pid),
+                            "Total Delay": f"{days} day(s)",
+                            "Root Cause": " & ".join(causes) if causes else "Manual override",
+                            "In-Transit Shipments": int(per_port.get(pid, 0)),
+                            "Exposed Orders": orders_linked,
+                            "Coordinates": f"{coords[0]}, {coords[1]}" if coords[0] else "-",
+                        })
+                    st.dataframe(pd.DataFrame(d_rows), use_container_width=True, hide_index=True)
+
+            elif selected_card == "orders":
+                with d_hdr:
+                    st.markdown("### Affected Orders Details")
+                    st.caption("All customer orders impacted by delays along inbound supply routes.")
+                if df.empty:
+                    st.success("No orders are exposed to current disruptions.")
+                else:
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Total Affected", len(df))
+                    m2.metric("Total Customers", df["customer"].nunique())
+                    m3.metric("Total SKUs", df["sku"].nunique())
+                    m4.metric("Total Units", f"{df['qty'].sum():,}")
+
+                    o_view = df.copy()
+                    o_view["ml_prob_pct"] = (o_view["ml_prob"] * 100).round(0)
+                    o_view["breach_status"] = o_view["breach"].map(lambda b: "Breach" if b else "OK")
+                    disp_cols = ["order_id", "customer", "sku", "qty", "port_name", "delay_days", "buffer_days", "cover_days", "risk_score", "risk_label", "ml_prob_pct", "breach_status"]
+                    st.dataframe(
+                        o_view[disp_cols], use_container_width=True, hide_index=True,
+                        column_config={
+                            "order_id": "Order ID",
+                            "customer": "Customer",
+                            "sku": "SKU",
+                            "qty": "Quantity",
+                            "port_name": "Inbound Port",
+                            "delay_days": "Delay (days)",
+                            "buffer_days": "Buffer (days)",
+                            "cover_days": "Cover (days)",
+                            "risk_score": st.column_config.ProgressColumn("Risk Score", min_value=0, max_value=100, format="%d"),
+                            "risk_label": "Risk Tier",
+                            "ml_prob_pct": st.column_config.ProgressColumn("ML Late Prob (%)", min_value=0, max_value=100, format="%d%%"),
+                            "breach_status": "Status",
+                        }
+                    )
+
+            elif selected_card == "high_risk":
+                with d_hdr:
+                    st.markdown("### High Risk Orders Details")
+                    st.caption("Critical orders requiring priority planner review and mitigation.")
+                high_df = df[df.risk_label == "HIGH"] if not df.empty else pd.DataFrame()
+                if high_df.empty:
+                    st.success("No orders currently flagged as HIGH risk.")
+                else:
+                    st.warning(f"{len(high_df)} orders are at HIGH risk. Disruption delay significantly threatens promised fulfillment.")
+                    h_view = high_df.copy()
+                    h_view["ml_prob_pct"] = (h_view["ml_prob"] * 100).round(0)
+                    h_view["breach_status"] = h_view["breach"].map(lambda b: "Breach" if b else "OK")
+                    disp_cols = ["order_id", "customer", "sku", "qty", "port_name", "delay_days", "buffer_days", "cover_days", "risk_score", "ml_prob_pct", "breach_status"]
+                    st.dataframe(
+                        h_view[disp_cols], use_container_width=True, hide_index=True,
+                        column_config={
+                            "order_id": "Order ID",
+                            "customer": "Customer",
+                            "sku": "SKU",
+                            "qty": "Quantity",
+                            "port_name": "Disrupted Port",
+                            "delay_days": "Delay (days)",
+                            "buffer_days": "Buffer (days)",
+                            "cover_days": "Cover (days)",
+                            "risk_score": st.column_config.ProgressColumn("Risk Score", min_value=0, max_value=100, format="%d"),
+                            "ml_prob_pct": st.column_config.ProgressColumn("ML Late Prob (%)", min_value=0, max_value=100, format="%d%%"),
+                            "breach_status": "Status",
+                        }
+                    )
+                    st.info("**Next step:** Switch to the Order detail page to approve mitigation plans (e.g. inventory transfer or reroute).")
+
+            elif selected_card == "breaches":
+                with d_hdr:
+                    st.markdown("### Potential Delivery Breaches Details")
+                    st.caption("Orders where disruption delay exceeds customer delivery safety buffer.")
+                breach_df = df[df.breach == True] if not df.empty else pd.DataFrame()
+                if breach_df.empty:
+                    st.success("Zero delivery breaches predicted! All current delays are absorbed by buffer days.")
+                else:
+                    st.error(f"{len(breach_df)} orders are projected to breach customer SLAs unless expedited or rerouted.")
+                    b_view = breach_df.copy()
+                    b_view["shortfall_days"] = b_view["delay_days"] - b_view["buffer_days"]
+                    b_view["ml_prob_pct"] = (b_view["ml_prob"] * 100).round(0)
+                    disp_cols = ["order_id", "customer", "sku", "qty", "port_name", "delay_days", "buffer_days", "shortfall_days", "cover_days", "risk_score", "ml_prob_pct"]
+                    st.dataframe(
+                        b_view[disp_cols], use_container_width=True, hide_index=True,
+                        column_config={
+                            "order_id": "Order ID",
+                            "customer": "Customer",
+                            "sku": "SKU",
+                            "qty": "Quantity",
+                            "port_name": "Disrupted Port",
+                            "delay_days": "Delay (days)",
+                            "buffer_days": "Buffer (days)",
+                            "shortfall_days": "Days Overdue (Shortfall)",
+                            "cover_days": "Cover (days)",
+                            "risk_score": st.column_config.ProgressColumn("Risk Score", min_value=0, max_value=100, format="%d"),
+                            "ml_prob_pct": st.column_config.ProgressColumn("ML Late Prob (%)", min_value=0, max_value=100, format="%d%%"),
+                        }
+                    )
 
     if df.empty:
         st.success("No orders are exposed to the current disruptions.")
@@ -135,9 +354,9 @@ if page == P_DASH:
     st.subheader("Supply routes")
     try:
         st.pydeck_chart(ui.route_map(net["ports"], net["routes"], net["shipments"],
-                                     weather.PORT_COORDS, delay_map))
-        st.caption("Arcs run from each port to the factory. Red = disrupted, green = operating. "
-                   "Thicker arc = more shipments in transit. Hover for details.")
+                                     weather.PORT_COORDS, delay_map, dark=dark_mode))
+        st.caption(f"Arcs run from each port to the factory. Red = disrupted, green = operating. "
+                   f"Thicker arc = more shipments in transit. Hover for details. (Theme: {'Dark' if dark_mode else 'Light'})")
     except Exception:
         map_df = ui.port_map_df(net["ports"], weather.PORT_COORDS, delay_map)
         try:
@@ -244,21 +463,46 @@ elif page == P_ORDER:
                 verified = st.checkbox("I have manually verified the shipment data")
             evidence_txt = (f"Risk {row.risk_score}/100 · {row.shipment_id} +{row.delay_days}d · "
                             f"cover {row.cover_days}d")
-            c1, c2 = st.columns(2)
-            if c1.button("APPROVE", disabled=not verified, use_container_width=True):
-                decisions.log_decision(order_id, chosen.name, "APPROVED by planner",
-                                       f"{chosen.name}: est. Rs {chosen.cost:,.0f}, residual delay {chosen.delay_days:g}d",
-                                       evidence_txt, chosen.cost)
-                st.toast(f"Decision logged: {chosen.name} for {order_id}")
-                st.success("Decision logged. (No operational system was changed - this is a demo.)")
-                if SHIP_GIF.exists():
+
+            # Check if this order already has an immutable decision logged
+            existing_decision = decisions.get_order_decision(order_id)
+            is_decided = existing_decision is not None
+
+            if is_decided:
+                dec_status = existing_decision["status"]
+                dec_act = existing_decision["action"]
+                dec_time = existing_decision["decided_at"]
+                dec_reason = existing_decision["reason"]
+                if "APPROVED" in dec_status:
+                    st.success(
+                        f"**Decision Recorded: {dec_status}**\n\n"
+                        f"- **Action:** {dec_act}  \n"
+                        f"- **Decided at:** {dec_time}  \n"
+                        f"- **Details:** {dec_reason}  \n\n"
+                        f"*This decision has been finalized and cannot be changed.*"
+                    )
+                else:
+                    st.error(
+                        f"**Decision Recorded: {dec_status}**\n\n"
+                        f"- **Action:** {dec_act}  \n"
+                        f"- **Decided at:** {dec_time}  \n"
+                        f"- **Details:** {dec_reason}  \n\n"
+                        f"*This decision has been finalized and cannot be changed.*"
+                    )
+                if SHIP_GIF.exists() and st.session_state.get(f"_just_approved_{order_id}"):
                     st.markdown(ui.ship_html(SHIP_GIF, "Approved - cargo is on the move"),
                                 unsafe_allow_html=True)
-            if c2.button("REJECT", use_container_width=True):
-                decisions.log_decision(order_id, chosen.name, "REJECTED by planner",
-                                       "Planner rejected the recommendation", evidence_txt, chosen.cost)
-                st.toast(f"Rejection logged for {order_id}")
-                st.info("Rejection logged.")
+                    st.session_state[f"_just_approved_{order_id}"] = False
+
+            c1, c2 = st.columns(2)
+            btn_disabled = is_decided or (not verified)
+            help_tooltip = "Decision is locked for this order and cannot be changed" if is_decided else None
+
+            if c1.button("APPROVE", disabled=btn_disabled, use_container_width=True, help=help_tooltip):
+                confirm_approve_dialog(order_id, chosen, evidence_txt)
+
+            if c2.button("REJECT", disabled=btn_disabled, use_container_width=True, help=help_tooltip):
+                confirm_reject_dialog(order_id, chosen, evidence_txt)
 
 elif page == P_SIM:
     ui.hero("What-if disruption simulator", "Test a disruption before committing to a recovery plan.",
@@ -309,6 +553,12 @@ elif page == P_LOG:
         m2.metric("Approved", int(approved.sum()))
         m3.metric("Approved spend", f"Rs {log.loc[approved, 'est_cost'].sum():,.0f}")
         st.dataframe(log, use_container_width=True, hide_index=True)
+        with st.expander("Demo controls: reset decision log"):
+            st.caption("Clearing the log resets the locked status on orders so you can demonstrate the approval/rejection flow again.")
+            if st.button("Reset / Clear All Decisions"):
+                decisions.clear_decisions()
+                st.toast("Decision history cleared.")
+                st.rerun()
 
 else:
     ui.hero("Model check: rules vs ML", "Prove value before claiming accuracy.",
